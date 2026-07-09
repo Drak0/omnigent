@@ -524,15 +524,30 @@ def worktree_guard(
     """
     Factory: confine a worker's file writes to its worktree subtree.
 
-    DENIES ``sys_os_write`` / ``sys_os_edit`` whose ``path`` is absolute
-    or escapes upward (a ``..`` segment) — what a worker would do to write
-    outside *allowed_root*. Relative in-tree paths are ALLOWED. Workers run
-    with their worktree as cwd, so legitimate edits are always relative and
-    in-tree; this catches escapes. Intended for the (unsandboxed)
-    implementer worker specs, not the orchestrator.
+    DENIES ``sys_os_write`` / ``sys_os_edit`` whose ``path`` escapes
+    upward (a ``..`` segment), and DENIES absolute/home paths that do not
+    contain an *allowed_root* path segment (e.g. ``.worktrees``) —
+    i.e. an absolute path pointing somewhere outside any worktree.
+    Relative in-tree paths, and absolute paths that resolve inside a
+    worktree, are ALLOWED. Intended for the (unsandboxed) implementer
+    worker specs, not the orchestrator.
+
+    Native harnesses — Claude Code in particular — always emit an
+    absolute ``file_path`` for Write/Edit/MultiEdit, even for files
+    already inside the worker's own worktree: the tool contract requires
+    it. The runner/session dispatch path does not currently plumb the
+    worker's actual cwd into policy evaluation (neither ``event`` nor
+    ``config`` carries it), so this can't do a true resolve-and-check
+    containment the way ``inner/terminal.py``'s cwd-override guard does.
+    The *allowed_root* segment check is the practical stand-in: it
+    distinguishes "absolute path inside some worktree" from "absolute
+    path escaping to an arbitrary location" without that plumbing. The
+    prior blanket "any absolute path is DENY" denied 100% of Claude-native
+    writes, since that harness never emits relative paths.
 
     :param allowed_root: The worktree root workers are confined to, e.g.
-        ``".worktrees"``. Used only in the deny message.
+        ``".worktrees"``. An absolute/home path is ALLOWED only if one of
+        its segments equals this value.
     :param deny_reason: Reason text surfaced on a DENY decision.
     :returns: An evaluator ``fn(event, config)`` returning a V0 decision.
     """
@@ -551,7 +566,8 @@ def worktree_guard(
         :param event: V0 ``tool_call`` event for ``sys_os_write`` /
             ``sys_os_edit`` / Claude native ``Write`` / ``Edit``.
         :param config: Runtime config dict (unused).
-        :returns: DENY on an absolute or ``..``-escaping path, else ALLOW.
+        :returns: DENY on a ``..``-escaping path, or an absolute/home
+            path with no *allowed_root* segment; else ALLOW.
         """
         args = _tool_call(event, _write_tools)
         if args is None:
@@ -560,7 +576,10 @@ def worktree_guard(
         path = args.get("path") or args.get("file_path")
         if not isinstance(path, str):
             return _ALLOW
-        if path.startswith(("/", "~")) or ".." in path.split("/"):
+        segments = path.split("/")
+        if ".." in segments:
+            return _decision("DENY", f"{deny_reason} (outside {allowed_root}/: {path!r})")
+        if path.startswith(("/", "~")) and allowed_root not in segments:
             return _decision("DENY", f"{deny_reason} (outside {allowed_root}/: {path!r})")
         return _ALLOW
 

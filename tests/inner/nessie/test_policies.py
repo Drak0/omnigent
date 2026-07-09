@@ -376,17 +376,26 @@ def test_headless_subagent_purpose_guard_ignores_non_session_tools() -> None:
         ("~/.bashrc", "DENY"),
         ("../outside.py", "DENY"),
         ("a/../../escape.py", "DENY"),
+        # Native harnesses (Claude Code) always emit absolute file_path, even
+        # for files already inside the worker's own worktree -- an absolute
+        # path IS allowed when it resolves inside a `.worktrees` tree.
+        ("/home/worker/repo/.worktrees/w1/src/app.py", "ALLOW"),
+        # `..` still wins even when a `.worktrees` segment is present earlier
+        # in the path -- the escape check is not short-circuited by it.
+        ("/home/worker/repo/.worktrees/w1/../../etc/passwd", "DENY"),
     ],
 )
 def test_worktree_guard_blocks_escapes(path: str, expected: str) -> None:
     """
     worktree_guard ALLOWS relative in-tree write paths and DENIES absolute or
-    ``..``-escaping ones.
+    ``..``-escaping ones, EXCEPT an absolute path that resolves inside a
+    ``.worktrees`` tree, which is also ALLOWED.
 
     A DENY-case failure means an unsandboxed worker could write outside its
     worktree (the confinement that makes workers safe is gone). An ALLOW-case
     failure means ordinary in-worktree edits are blocked and workers can't do
-    their job.
+    their job -- this is what broke 100% of Claude-native writes before this
+    fix, since that harness never emits relative paths.
     """
     evaluate = worktree_guard()
     assert _result(evaluate(_tool_call("sys_os_write", path=path, content=""), {})) == expected
@@ -399,6 +408,11 @@ def test_worktree_guard_blocks_escapes(path: str, expected: str) -> None:
         ("Write", "file_path", "src/app.py", "ALLOW"),
         ("Write", "file_path", "/etc/passwd", "DENY"),
         ("Write", "file_path", "../escape.py", "DENY"),
+        # The actual bug: Claude Code's Write tool contract requires an
+        # absolute file_path even for a file already inside the worker's
+        # own worktree. Before this fix every such call hit the blanket
+        # "absolute == DENY" rule, i.e. 100% of Claude-native writes.
+        ("Write", "file_path", "/home/worker/repo/.worktrees/w1/src/app.py", "ALLOW"),
         # Claude native Edit also uses ``file_path``.
         ("Edit", "file_path", "main.py", "ALLOW"),
         ("Edit", "file_path", "~/.bashrc", "DENY"),
@@ -417,6 +431,7 @@ def test_worktree_guard_blocks_escapes(path: str, expected: str) -> None:
         "Write-in-tree",
         "Write-absolute",
         "Write-escape",
+        "Write-absolute-in-worktree",
         "Edit-in-tree",
         "Edit-home-escape",
         "MultiEdit-in-tree",
