@@ -1,12 +1,12 @@
 """Unit tests for native-worker YOLO ``terminal_launch_args`` derivation.
 
 Nessie's native sub-agent workers (claude-native / codex-native /
-cursor-native) launch in a headless pane where no human can answer an
+cursor-native / antigravity-native) launch in a headless pane where no human can answer an
 approval prompt. The server translates a worker's bypass stance into the
 per-session ``terminal_launch_args`` the runner appends to the native
 CLI argv: claude-native opts in via ``permission_mode``, while
-codex-native and cursor-native default to full bypass (issue #171 /
-cursor ``--yolo``) because the headless seam has no safe non-bypass
+codex-native, cursor-native, and antigravity-native default to full bypass
+(issue #171 / cursor ``--yolo``) because the headless seam has no safe non-bypass
 default, with ``yolo: false`` as the opt-out.
 
 These tests exercise the pure translation helper
@@ -175,6 +175,20 @@ def test_cursor_native_permission_mode_auto_uses_auto_review() -> None:
     """
     spec = _spec_with_config({"harness": "cursor-native", "permission_mode": "auto"})
     assert _derive_terminal_launch_args_from_spec(spec) == ["--auto-review"]
+
+
+def test_antigravity_native_defaults_to_skip_permissions() -> None:
+    """A headless antigravity-native sub-agent defaults to skipping permissions."""
+    antigravity = _spec_with_config({"harness": "antigravity-native"})
+    assert _derive_terminal_launch_args_from_spec(antigravity) == [
+        "--dangerously-skip-permissions"
+    ]
+
+
+def test_antigravity_native_yolo_false_opts_out() -> None:
+    """``yolo: false`` keeps antigravity-native permission prompts enabled."""
+    spec = _spec_with_config({"harness": "antigravity-native", "yolo": "False"})
+    assert _derive_terminal_launch_args_from_spec(spec) is None
 
 
 @pytest.mark.parametrize(

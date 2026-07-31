@@ -51,6 +51,7 @@ from omnigent.entities.conversation import (
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_plugins import (
+    ANTIGRAVITY_NATIVE_CODING_AGENT,
     NativeCodingAgent,
 )
 from omnigent.native_coding_agents import (
@@ -7393,7 +7394,8 @@ def _derive_terminal_launch_args_from_spec(sub_spec: AgentSpec) -> list[str] | N
     """
     Derive native-terminal YOLO pass-through args from a trusted sub-spec.
 
-    polly's native workers (claude-native / codex-native / cursor-native)
+    polly's native workers (claude-native / codex-native / cursor-native /
+    antigravity-native)
     launch in a headless pane where no human can answer an ApprovalCard, so
     every Edit/Write/Bash that prompts stalls the worker. This translates a
     worker bundle's declared full-bypass intent into the per-session
@@ -7424,6 +7426,9 @@ def _derive_terminal_launch_args_from_spec(sub_spec: AgentSpec) -> list[str] | N
       to ``auto`` or ``auto-review``, emit ``["--auto-review"]`` instead
       (Smart Auto) so a bundle can choose Claude-style auto without full
       yolo.
+    - antigravity-native -> ``["--dangerously-skip-permissions"]`` by
+      DEFAULT. Headless antigravity workers otherwise stall on agy's
+      permission prompts; ``executor.config.yolo: false`` opts out.
 
     Only those native harnesses are translated; for any other harness
     (e.g. ``claude-sdk`` / ``cursor``, whose bypass is set via the SDK
@@ -7472,6 +7477,10 @@ def _derive_terminal_launch_args_from_spec(sub_spec: AgentSpec) -> list[str] | N
         if _spec_config_flag_explicitly_disabled(sub_spec, "yolo"):
             return None
         return _validate_terminal_launch_args(["--yolo"])
+    if harness == ANTIGRAVITY_NATIVE_CODING_AGENT.harness:
+        if _spec_config_flag_explicitly_disabled(sub_spec, "yolo"):
+            return None
+        return _validate_terminal_launch_args(["--dangerously-skip-permissions"])
     return None
 
 
